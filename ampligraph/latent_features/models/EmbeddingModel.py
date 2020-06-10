@@ -24,6 +24,7 @@ from ampligraph.latent_features import constants as constants
 # New Import
 from datetime import datetime
 import os
+import warnings
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -291,16 +292,23 @@ class EmbeddingModel(abc.ABC):
         self.base_directory = "../Result_Embedding/"
 
         self.log_directory = self.base_directory + self.class_name + "/" + self.project_name + "/" + date_time + "/Log/"
-        self.checkpoint_dir = self.base_directory + self.class_name + "/" + \
+        self.checkpoint_path = self.base_directory + self.class_name + "/" + \
                               self.project_name + "/" + date_time + "/Checkpoint/"
 
-        if not os.path.isdir(self.checkpoint_dir):
-            os.makedirs(self.checkpoint_dir)
+        if not os.path.isdir(self.checkpoint_path):
+            os.makedirs(self.checkpoint_path)
 
         if not os.path.isdir(self.log_directory):
             os.makedirs(self.log_directory)
 
-        self.checkpoint_file = self.checkpoint_dir + "/model.pkl"
+        # CallBacks
+        self.callbacks_start = {}
+        self.callbacks_end = {}
+
+        # Variable
+        self.epoch = 1
+        self.accuracy = 0
+
 
     @abc.abstractmethod
     def _fn(self, e_s, e_p, e_o):
@@ -856,7 +864,7 @@ class EmbeddingModel(abc.ABC):
 
             yield out, unique_entities, entity_embeddings
 
-    def fit(self, X, early_stopping=False, early_stopping_params={}):
+    def fit(self, X, X_valid=None, early_stopping=False, early_stopping_params={}, callbacks={}):
         """Train an EmbeddingModel (with optional early stopping).
 
         The model is trained on a training set X using the training protocol
@@ -891,6 +899,11 @@ class EmbeddingModel(abc.ABC):
                 Example: ``early_stopping_params={x_valid=X['valid'], 'criteria': 'mrr'}``
 
         """
+        # Handle Callbacks
+        self.parse_callbacks(callbacks)
+
+
+
         self.train_dataset_handle = None
         # try-except block is mainly to handle clean up in case of exception or manual stop in jupyter notebook
         try:
@@ -991,6 +1004,8 @@ class EmbeddingModel(abc.ABC):
             epoch_iterator_with_progress = tqdm(range(1, self.epochs + 1), disable=(not self.verbose), unit='epoch')
 
             for epoch in epoch_iterator_with_progress:
+                self.epoch = epoch
+                self.apply_callbacks(self.callbacks_start)
                 losses = []
                 for batch in range(1, self.batches_count + 1):
                     feed_dict = {}
@@ -1020,6 +1035,8 @@ class EmbeddingModel(abc.ABC):
 
                     logger.debug(msg)
                     epoch_iterator_with_progress.set_description(msg)
+
+                self.apply_callbacks(self.callbacks_end)
 
                 if early_stopping:
 
@@ -1156,14 +1173,16 @@ class EmbeddingModel(abc.ABC):
 
         corruption_entities = self.eval_config.get('corruption_entities', constants.DEFAULT_CORRUPTION_ENTITIES)
 
-        if corruption_entities == 'all':
-            corruption_entities = all_entities_np
-        elif isinstance(corruption_entities, np.ndarray):
-            corruption_entities = corruption_entities
-        else:
-            msg = 'Invalid type for corruption entities.'
-            logger.error(msg)
-            raise ValueError(msg)
+        with warnings.catch_warnings():
+            warnings.simplefilter(action='ignore', category=FutureWarning)
+            if corruption_entities == 'all':
+                corruption_entities = all_entities_np
+            elif isinstance(corruption_entities, np.ndarray):
+                corruption_entities = corruption_entities
+            else:
+                msg = 'Invalid type for corruption entities.'
+                logger.error(msg)
+                raise ValueError(msg)
 
         # Dependencies that need to be run before scoring
         test_dependency = []
@@ -1858,3 +1877,56 @@ class EmbeddingModel(abc.ABC):
         with tf.Session(config=self.tf_config) as sess:
             sess.run(tf.global_variables_initializer())
             return sess.run(probas)
+
+    def parse_callbacks(self, callbacks):
+        for key in callbacks:
+            if key[1] == 's':
+                self.callbacks_start[key] = callbacks[key]
+            else:
+                self.callbacks_end[key] = callbacks[key]
+
+    def apply_callbacks(self, callbacks):
+        for key in callbacks:
+            period = key[0]
+            if self.epoch % int(period) == 0:
+                fun_name = callbacks[key][0]
+                parameters = callbacks[key][1]
+                fun_name(**parameters)
+
+    def tensorboard(self):
+        return
+
+    def validation(self, dataset, positive_filter, corruption_entities):
+        try:
+            self.sess_train.run(self.set_training_false)
+        except AttributeError:
+            pass
+
+        self.early_stopping_params = {'x_valid': dataset,
+                                      'criteria': 'hits10',
+                                      'corruption_entities': corruption_entities,
+                                      'x_filter': positive_filter}
+
+        self._initialize_early_stopping()
+
+        ranks = []
+
+        # Get each triple and compute the rank for that triple
+        for x_test_triple in range(self.eval_dataset_handle.get_size("valid")):
+            rank_triple = self.sess_train.run(self.rank)
+            if self.eval_config.get('corrupt_side', constants.DEFAULT_CORRUPT_SIDE_EVAL) == 's,o':
+                ranks.append(list(rank_triple))
+            else:
+                ranks.append(rank_triple)
+
+        self.accuracy = hits_at_n_score(ranks, 10)
+
+        if self.verbose:
+            print()
+            print("Validation - Epoch #", self.epoch, "Hits10 = ", self.accuracy)
+
+        try:
+            self.sess_train.run(self.set_training_true)
+        except AttributeError:
+            pass
+        return
