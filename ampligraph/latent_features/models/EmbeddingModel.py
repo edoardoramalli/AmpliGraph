@@ -308,7 +308,8 @@ class EmbeddingModel(abc.ABC):
         # Variable
         self.epoch = 1
         self.accuracy = 0
-        self.train_loss = None
+        self.train_loss = 0
+        self.valid_loss = 0
 
         # TensorBoard
         self.tensorboard_writer = tf.summary.FileWriter(self.log_directory)
@@ -320,6 +321,9 @@ class EmbeddingModel(abc.ABC):
 
         self.train_loss_var = tf.Variable(0, dtype=tf.float32)
         self.train_loss_summ = tf.summary.scalar('Loss/Train', self.train_loss_var)
+
+        self.valid_loss_var = tf.Variable(0, dtype=tf.float32)
+        self.valid_loss_summ = tf.summary.scalar('Loss/Valid', self.valid_loss_var)
 
 
     @abc.abstractmethod
@@ -915,7 +919,6 @@ class EmbeddingModel(abc.ABC):
         self.parse_callbacks(callbacks)
 
 
-
         self.train_dataset_handle = None
         # try-except block is mainly to handle clean up in case of exception or manual stop in jupyter notebook
         try:
@@ -923,8 +926,11 @@ class EmbeddingModel(abc.ABC):
                 # Adapt the numpy data in the internal format - to generalize
                 self.train_dataset_handle = NumpyDatasetAdapter()
                 self.train_dataset_handle.set_data(X, "train")
+                if X_valid is not None:
+                    self.train_dataset_handle.set_data(X_valid, "validation")
             elif isinstance(X, AmpligraphDatasetAdapter):
                 self.train_dataset_handle = X
+                # TODO fix qua  X_valid
             else:
                 msg = 'Invalid type for input X. Expected ndarray/AmpligraphDataset object, got {}'.format(type(X))
                 logger.error(msg)
@@ -974,12 +980,14 @@ class EmbeddingModel(abc.ABC):
             self.sess_train = tf.Session(config=self.tf_config)
 
             batch_size = int(np.ceil(self.train_dataset_handle.get_size("train") / self.batches_count))
+            batch_size_loss = int(np.ceil(self.train_dataset_handle.get_size("validation") / self.batches_count))
             # dataset = tf.data.Dataset.from_tensor_slices(X).repeat().batch(batch_size).prefetch(2)
 
             if len(self.ent_to_idx) > ENTITY_THRESHOLD:
                 logger.warning('Only {} embeddings would be loaded in memory per batch...'.format(batch_size * 2))
 
             self.batch_size = batch_size
+            self.batch_size_loss = batch_size_loss
             self._initialize_parameters()
 
             dataset = tf.data.Dataset.from_generator(self._training_data_generator,
@@ -989,6 +997,16 @@ class EmbeddingModel(abc.ABC):
             dataset = dataset.repeat().prefetch(prefetch_batches)
 
             dataset_iterator = tf.data.make_one_shot_iterator(dataset)
+
+            # Validation Loss
+            dataset_loss = tf.data.Dataset.from_generator(self._validation_loss,
+                                                     output_types=(tf.int32, tf.int32, tf.float32),
+                                                     output_shapes=((None, 3), (None, 1), (None, self.internal_k)))
+
+            dataset_loss = dataset_loss.repeat().prefetch(prefetch_batches)
+
+            dataset_iterator_loss = tf.data.make_one_shot_iterator(dataset_loss)
+
             # init tf graph/dataflow for training
             # init variables (model parameters to be learned - i.e. the embeddings)
 
@@ -996,6 +1014,7 @@ class EmbeddingModel(abc.ABC):
                 batch_size = batch_size * self.eta
 
             loss = self._get_model_loss(dataset_iterator)
+            loss_valid = self._get_model_loss(dataset_iterator_loss)
 
             train = self.optimizer.minimize(loss)
 
@@ -1027,6 +1046,7 @@ class EmbeddingModel(abc.ABC):
                 self.epoch = epoch
                 self.apply_callbacks(self.callbacks_start)
                 losses = []
+                valid_loss = []
                 for batch in range(1, self.batches_count + 1):
                     feed_dict = {}
                     self.optimizer.update_feed_dict(feed_dict, batch, epoch)
@@ -1037,6 +1057,7 @@ class EmbeddingModel(abc.ABC):
                             self.sess_train.run(self.ent_emb)[:unique_entities.shape[0], :]
                     else:
                         loss_batch, _ = self.sess_train.run([loss, train], feed_dict=feed_dict)
+                        loss_valid_batch = self.sess_train.run(loss_valid, feed_dict=feed_dict)
 
                     if np.isnan(loss_batch) or np.isinf(loss_batch):
                         msg = 'Loss is {}. Please change the hyperparameters.'.format(loss_batch)
@@ -1044,13 +1065,16 @@ class EmbeddingModel(abc.ABC):
                         raise ValueError(msg)
 
                     losses.append(loss_batch)
+                    valid_loss.append(loss_valid_batch)
                     if self.embedding_model_params.get('normalize_ent_emb', constants.DEFAULT_NORMALIZE_EMBEDDINGS):
                         self.sess_train.run(normalize_ent_emb_op)
 
                 self.train_loss = sum(losses) / (batch_size * self.batches_count)
+                self.valid_loss = sum(valid_loss) / (batch_size * self.batches_count)
 
                 if self.verbose:
-                    msg = 'Train Loss: {:10f}'.format(self.train_loss)
+                    msg = 'Train Loss:{:10f}'.format(self.train_loss)
+                    msg += ' | Valid Loss:{:10f}'.format(self.valid_loss)
                     if early_stopping and self.early_stopping_best_value is not None:
                         msg += ' — Best validation ({}): {:5f}'.format(self.early_stopping_criteria,
                                                                        self.early_stopping_best_value)
@@ -1924,6 +1948,10 @@ class EmbeddingModel(abc.ABC):
         self.tensorboard_session.run(self.train_loss_var.assign(self.train_loss))
         self.tensorboard_writer.add_summary(self.tensorboard_session.run(self.train_loss_summ), self.epoch)
 
+        # Valid Loss
+        self.tensorboard_session.run(self.valid_loss_var.assign(self.valid_loss))
+        self.tensorboard_writer.add_summary(self.tensorboard_session.run(self.valid_loss_summ), self.epoch)
+
         # Entity and Relation Embeddings
         try:
             self.sess_train.run(self.set_training_false)
@@ -1951,9 +1979,45 @@ class EmbeddingModel(abc.ABC):
         except AttributeError:
             pass
 
-
         self.tensorboard_writer.flush()
 
+    def _validation_loss(self):
+        """Generates the training data.
+           If we are dealing with large graphs, then along with the training triples (of the batch),
+           this method returns the idx of the entities present in the batch (along with filler entities
+           sampled randomly from the rest(not in batch) to load batch_size*2 entities on the GPU) and their embeddings.
+        """
+
+        all_ent = np.int32(np.arange(len(self.ent_to_idx)))
+        unique_entities = all_ent.reshape(-1, 1)
+        # generate empty embeddings for smaller graphs - as all the entity embeddings will be loaded on GPU
+        entity_embeddings = np.empty(shape=(0, self.internal_k), dtype=np.float32)
+        # create iterator to iterate over the train batches
+        batch_iterator = iter(self.train_dataset_handle.get_next_batch(self.batches_count, "validation"))
+        for i in range(self.batches_count):
+            out = next(batch_iterator)
+            # If large graph, load batch_size*2 entities on GPU memory
+            if self.dealing_with_large_graphs:
+                # find the unique entities - these HAVE to be loaded
+                unique_entities = np.int32(np.unique(np.concatenate([out[:, 0], out[:, 2]], axis=0)))
+                # Load the remaining entities by randomly selecting from the rest of the entities
+                self.leftover_entities = self.rnd.permutation(np.setdiff1d(all_ent, unique_entities))
+                needed = (self.batch_size * 2 - unique_entities.shape[0])
+                '''
+                #this is for debugging
+                large_number = np.zeros((self.batch_size-unique_entities.shape[0],
+                                             self.ent_emb_cpu.shape[1]), dtype=np.float32) + np.nan
+
+                entity_embeddings = np.concatenate((self.ent_emb_cpu[unique_entities,:],
+                                                    large_number), axis=0)
+                '''
+                unique_entities = np.int32(
+                    np.concatenate([unique_entities, self.leftover_entities[:needed]], axis=0))
+                entity_embeddings = self.ent_emb_cpu[unique_entities, :]
+
+                unique_entities = unique_entities.reshape(-1, 1)
+
+            yield out, unique_entities, entity_embeddings
 
     def validation(self, dataset, positive_filter, corruption_entities):
         try:
