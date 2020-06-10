@@ -21,6 +21,10 @@ from ampligraph.datasets import AmpligraphDatasetAdapter, NumpyDatasetAdapter
 from functools import partial
 from ampligraph.latent_features import constants as constants
 
+# New Import
+from datetime import datetime
+import os
+
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
 
@@ -68,6 +72,7 @@ class EmbeddingModel(abc.ABC):
     """
 
     def __init__(self,
+                 project_name="",
                  k=constants.DEFAULT_EMBEDDING_SIZE,
                  eta=constants.DEFAULT_ETA,
                  epochs=constants.DEFAULT_EPOCH,
@@ -272,6 +277,30 @@ class EmbeddingModel(abc.ABC):
         self.train_dataset_handle = None
         self.is_calibrated = False
         self.calibration_parameters = []
+
+        # ----- New Part EDO ------------
+        self.project_name = project_name
+
+        # Time Project
+        now = datetime.now()
+        date_time = now.strftime("%Y.%m.%d_%H:%M:%S")
+
+        # Directory
+
+        self.class_name = self.__class__.__name__
+        self.base_directory = "../Result_Embedding/"
+
+        self.log_directory = self.base_directory + self.class_name + "/" + self.project_name + "/" + date_time + "/Log/"
+        self.checkpoint_dir = self.base_directory + self.class_name + "/" + \
+                              self.project_name + "/" + date_time + "/Checkpoint/"
+
+        if not os.path.isdir(self.checkpoint_dir):
+            os.makedirs(self.checkpoint_dir)
+
+        if not os.path.isdir(self.log_directory):
+            os.makedirs(self.log_directory)
+
+        self.checkpoint_file = self.checkpoint_dir + "/model.pkl"
 
     @abc.abstractmethod
     def _fn(self, e_s, e_p, e_o):

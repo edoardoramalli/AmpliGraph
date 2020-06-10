@@ -49,6 +49,7 @@ class TransE(EmbeddingModel):
     """
 
     def __init__(self,
+                 project_name="",
                  k=constants.DEFAULT_EMBEDDING_SIZE,
                  eta=constants.DEFAULT_ETA,
                  epochs=constants.DEFAULT_EPOCH,
@@ -171,7 +172,7 @@ class TransE(EmbeddingModel):
                          loss=loss, loss_params=loss_params,
                          regularizer=regularizer, regularizer_params=regularizer_params,
                          initializer=initializer, initializer_params=initializer_params,
-                         verbose=verbose)
+                         verbose=verbose, project_name=project_name)
 
     def _fn(self, e_s, e_p, e_o):
         r"""The TransE scoring function.
