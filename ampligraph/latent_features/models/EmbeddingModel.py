@@ -308,6 +308,18 @@ class EmbeddingModel(abc.ABC):
         # Variable
         self.epoch = 1
         self.accuracy = 0
+        self.train_loss = None
+
+        # TensorBoard
+        self.tensorboard_writer = tf.summary.FileWriter(self.log_directory)
+        self.tensorboard_session = tf.Session()
+
+        # TensorBoard Variable
+        self.accuracy_var = tf.Variable(0, dtype=tf.float32)
+        self.accuracy_summ = tf.summary.scalar('Accuracy/Hits10', self.accuracy_var)
+
+        self.train_loss_var = tf.Variable(0, dtype=tf.float32)
+        self.train_loss_summ = tf.summary.scalar('Loss/Train', self.train_loss_var)
 
 
     @abc.abstractmethod
@@ -920,6 +932,14 @@ class EmbeddingModel(abc.ABC):
 
             # create internal IDs mappings
             self.rel_to_idx, self.ent_to_idx = self.train_dataset_handle.generate_mappings()
+
+            self.entity_emb_var = tf.Variable(np.empty((len(self.ent_to_idx), self.internal_k), dtype=np.float32))
+            self.entity_emb_summ = tf.summary.histogram('Weight/Entity', self.entity_emb_var)
+
+            self.relation_emb_var = tf.Variable(np.empty((len(self.rel_to_idx), self.internal_k), dtype=np.float32))
+            self.relation_emb_summ = tf.summary.histogram('Weight/Relation', self.relation_emb_var)
+
+
             prefetch_batches = 1
 
             if len(self.ent_to_idx) > ENTITY_THRESHOLD:
@@ -1027,8 +1047,10 @@ class EmbeddingModel(abc.ABC):
                     if self.embedding_model_params.get('normalize_ent_emb', constants.DEFAULT_NORMALIZE_EMBEDDINGS):
                         self.sess_train.run(normalize_ent_emb_op)
 
+                self.train_loss = sum(losses) / (batch_size * self.batches_count)
+
                 if self.verbose:
-                    msg = 'Average Loss: {:10f}'.format(sum(losses) / (batch_size * self.batches_count))
+                    msg = 'Train Loss: {:10f}'.format(self.train_loss)
                     if early_stopping and self.early_stopping_best_value is not None:
                         msg += ' — Best validation ({}): {:5f}'.format(self.early_stopping_criteria,
                                                                        self.early_stopping_best_value)
@@ -1894,7 +1916,44 @@ class EmbeddingModel(abc.ABC):
                 fun_name(**parameters)
 
     def tensorboard(self):
-        return
+        # Accuracy
+        self.tensorboard_session.run(self.accuracy_var.assign(self.accuracy))
+        self.tensorboard_writer.add_summary(self.tensorboard_session.run(self.accuracy_summ), self.epoch)
+
+        # Train Loss
+        self.tensorboard_session.run(self.train_loss_var.assign(self.train_loss))
+        self.tensorboard_writer.add_summary(self.tensorboard_session.run(self.train_loss_summ), self.epoch)
+
+        # Entity and Relation Embeddings
+        try:
+            self.sess_train.run(self.set_training_false)
+        except AttributeError:
+            pass
+
+        tmp = self.is_fitted
+        self.is_fitted = True
+
+        self._save_trained_params()
+
+        entity_embeddings = self.get_embeddings(list(self.ent_to_idx.keys()), "entity")
+        relation_embeddings = self.get_embeddings(list(self.rel_to_idx.keys()), "relation")
+
+        self.tensorboard_session.run(self.entity_emb_var.assign(entity_embeddings))
+        self.tensorboard_writer.add_summary(self.tensorboard_session.run(self.entity_emb_summ), self.epoch)
+
+        self.tensorboard_session.run(self.relation_emb_var.assign(relation_embeddings))
+        self.tensorboard_writer.add_summary(self.tensorboard_session.run(self.relation_emb_summ), self.epoch)
+
+        self.is_fitted = tmp
+
+        try:
+            self.sess_train.run(self.set_training_true)
+        except AttributeError:
+            pass
+
+
+        self.tensorboard_writer.flush()
+
 
     def validation(self, dataset, positive_filter, corruption_entities):
         try:
