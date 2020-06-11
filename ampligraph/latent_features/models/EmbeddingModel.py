@@ -291,6 +291,9 @@ class EmbeddingModel(abc.ABC):
         self.class_name = self.__class__.__name__
         self.base_directory = "../Result_Embedding/"
 
+        if self.project_name == "":
+            self.project_name = "default"
+
         self.log_directory = self.base_directory + self.class_name + "/" + self.project_name + "/" + date_time + "/Log/"
         self.checkpoint_path = self.base_directory + self.class_name + "/" + \
                               self.project_name + "/" + date_time + "/Checkpoint/"
@@ -880,7 +883,7 @@ class EmbeddingModel(abc.ABC):
 
             yield out, unique_entities, entity_embeddings
 
-    def fit(self, X, X_valid=None, early_stopping=False, early_stopping_params={}, callbacks={}):
+    def fit(self, X, X_valid=None, early_stopping=False, early_stopping_params={}, callbacks={}, restore=False):
         """Train an EmbeddingModel (with optional early stopping).
 
         The model is trained on a training set X using the training protocol
@@ -980,15 +983,22 @@ class EmbeddingModel(abc.ABC):
             self.sess_train = tf.Session(config=self.tf_config)
 
             batch_size = int(np.ceil(self.train_dataset_handle.get_size("train") / self.batches_count))
-            batch_size_loss = int(np.ceil(self.train_dataset_handle.get_size("validation") / self.batches_count))
+
+            if X_valid is not None:
+                batch_size_loss = int(np.ceil(self.train_dataset_handle.get_size("validation") / self.batches_count))
             # dataset = tf.data.Dataset.from_tensor_slices(X).repeat().batch(batch_size).prefetch(2)
 
             if len(self.ent_to_idx) > ENTITY_THRESHOLD:
                 logger.warning('Only {} embeddings would be loaded in memory per batch...'.format(batch_size * 2))
 
             self.batch_size = batch_size
-            self.batch_size_loss = batch_size_loss
-            self._initialize_parameters()
+            if X_valid is not None:
+                self.batch_size_loss = batch_size_loss
+
+            if not restore:
+                self._initialize_parameters()
+            else:
+                self._load_model_from_trained_params()
 
             dataset = tf.data.Dataset.from_generator(self._training_data_generator,
                                                      output_types=(tf.int32, tf.int32, tf.float32),
@@ -999,13 +1009,14 @@ class EmbeddingModel(abc.ABC):
             dataset_iterator = tf.data.make_one_shot_iterator(dataset)
 
             # Validation Loss
-            dataset_loss = tf.data.Dataset.from_generator(self._validation_loss,
-                                                     output_types=(tf.int32, tf.int32, tf.float32),
-                                                     output_shapes=((None, 3), (None, 1), (None, self.internal_k)))
+            if X_valid is not None:
+                dataset_loss = tf.data.Dataset.from_generator(self._validation_loss,
+                                                         output_types=(tf.int32, tf.int32, tf.float32),
+                                                         output_shapes=((None, 3), (None, 1), (None, self.internal_k)))
 
-            dataset_loss = dataset_loss.repeat().prefetch(prefetch_batches)
+                dataset_loss = dataset_loss.repeat().prefetch(prefetch_batches)
 
-            dataset_iterator_loss = tf.data.make_one_shot_iterator(dataset_loss)
+                dataset_iterator_loss = tf.data.make_one_shot_iterator(dataset_loss)
 
             # init tf graph/dataflow for training
             # init variables (model parameters to be learned - i.e. the embeddings)
@@ -1014,7 +1025,9 @@ class EmbeddingModel(abc.ABC):
                 batch_size = batch_size * self.eta
 
             loss = self._get_model_loss(dataset_iterator)
-            loss_valid = self._get_model_loss(dataset_iterator_loss)
+
+            if X_valid is not None:
+                loss_valid = self._get_model_loss(dataset_iterator_loss)
 
             train = self.optimizer.minimize(loss)
 
@@ -1057,7 +1070,8 @@ class EmbeddingModel(abc.ABC):
                             self.sess_train.run(self.ent_emb)[:unique_entities.shape[0], :]
                     else:
                         loss_batch, _ = self.sess_train.run([loss, train], feed_dict=feed_dict)
-                        loss_valid_batch = self.sess_train.run(loss_valid, feed_dict=feed_dict)
+                        if X_valid is not None:
+                            loss_valid_batch = self.sess_train.run(loss_valid, feed_dict={})
 
                     if np.isnan(loss_batch) or np.isinf(loss_batch):
                         msg = 'Loss is {}. Please change the hyperparameters.'.format(loss_batch)
@@ -1065,12 +1079,14 @@ class EmbeddingModel(abc.ABC):
                         raise ValueError(msg)
 
                     losses.append(loss_batch)
-                    valid_loss.append(loss_valid_batch)
+                    if X_valid is not None:
+                        valid_loss.append(loss_valid_batch)
                     if self.embedding_model_params.get('normalize_ent_emb', constants.DEFAULT_NORMALIZE_EMBEDDINGS):
                         self.sess_train.run(normalize_ent_emb_op)
 
                 self.train_loss = sum(losses) / (batch_size * self.batches_count)
-                self.valid_loss = sum(valid_loss) / (batch_size * self.batches_count)
+                if X_valid is not None:
+                    self.valid_loss = sum(valid_loss) / (batch_size * self.batches_count)
 
                 if self.verbose:
                     msg = 'Train Loss:{:10f}'.format(self.train_loss)
@@ -2018,6 +2034,7 @@ class EmbeddingModel(abc.ABC):
                 unique_entities = unique_entities.reshape(-1, 1)
 
             yield out, unique_entities, entity_embeddings
+
 
     def validation(self, dataset, positive_filter, corruption_entities):
         try:
