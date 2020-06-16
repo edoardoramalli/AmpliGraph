@@ -34,6 +34,7 @@ class HolE(ComplEx):
     [[0.009254738], [0.00023370088]]
    """
     def __init__(self,
+                 project_name="",
                  k=constants.DEFAULT_EMBEDDING_SIZE,
                  eta=constants.DEFAULT_ETA,
                  epochs=constants.DEFAULT_EPOCH,
@@ -145,7 +146,7 @@ class HolE(ComplEx):
                          loss=loss, loss_params=loss_params,
                          regularizer=regularizer, regularizer_params=regularizer_params,
                          initializer=initializer, initializer_params=initializer_params,
-                         verbose=verbose)
+                         verbose=verbose, project_name=project_name)
         self.internal_k = self.k * 2
 
     def _fn(self, e_s, e_p, e_o):
@@ -175,7 +176,7 @@ class HolE(ComplEx):
         """
         return (2 / self.k) * (super()._fn(e_s, e_p, e_o))
 
-    def fit(self, X, early_stopping=False, early_stopping_params={}):
+    def fit(self, X, X_valid=None,early_stopping=False, early_stopping_params={}, callbacks={}, restore=False):
         """Train a HolE model.
 
         The model is trained on a training set X using the training protocol
@@ -235,7 +236,7 @@ class HolE(ComplEx):
                 Example: ``early_stopping_params={x_valid=X['valid'], 'criteria': 'mrr'}``
 
         """
-        super().fit(X, early_stopping, early_stopping_params)
+        super().fit(X, X_valid, early_stopping, early_stopping_params, callbacks, restore)
 
     def predict(self, X, from_idx=False):
         __doc__ = super().predict.__doc__  # NOQA

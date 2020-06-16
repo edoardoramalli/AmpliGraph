@@ -604,6 +604,8 @@ class ConvE(EmbeddingModel):
             # create internal IDs mappings
             self.rel_to_idx, self.ent_to_idx = self.train_dataset_handle.generate_mappings()
 
+
+
             if len(self.ent_to_idx) > ENTITY_THRESHOLD:
                 self.dealing_with_large_graphs = True
                 prefetch_batches = 0

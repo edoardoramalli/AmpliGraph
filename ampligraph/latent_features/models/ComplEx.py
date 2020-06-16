@@ -68,6 +68,7 @@ class ComplEx(EmbeddingModel):
     """
     def __init__(self,
                  project_name="",
+                 model_class="",
                  k=constants.DEFAULT_EMBEDDING_SIZE,
                  eta=constants.DEFAULT_ETA,
                  epochs=constants.DEFAULT_EPOCH,
@@ -234,7 +235,7 @@ class ComplEx(EmbeddingModel):
             tf.reduce_sum(e_p_img * e_s_real * e_o_img, axis=1) - \
             tf.reduce_sum(e_p_img * e_s_img * e_o_real, axis=1)
 
-    def fit(self, X, X_valid, early_stopping=False, early_stopping_params={}, callbacks={}):
+    def fit(self, X, X_valid=None, early_stopping=False, early_stopping_params={}, callbacks={}, restore=False):
         """Train a ComplEx model.
 
         The model is trained on a training set X using the training protocol
@@ -294,7 +295,7 @@ class ComplEx(EmbeddingModel):
                 Example: ``early_stopping_params={x_valid=X['valid'], 'criteria': 'mrr'}``
 
         """
-        super().fit(X, X_valid, early_stopping, early_stopping_params, callbacks)
+        super().fit(X, X_valid, early_stopping, early_stopping_params, callbacks, restore)
 
     def predict(self, X, from_idx=False):
         __doc__ = super().predict.__doc__  # NOQA

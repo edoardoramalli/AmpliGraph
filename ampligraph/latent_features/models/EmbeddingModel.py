@@ -25,6 +25,8 @@ from ampligraph.latent_features import constants as constants
 from datetime import datetime
 import os
 import warnings
+import statistics
+import random
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -74,6 +76,7 @@ class EmbeddingModel(abc.ABC):
 
     def __init__(self,
                  project_name="",
+                 model_class="",
                  k=constants.DEFAULT_EMBEDDING_SIZE,
                  eta=constants.DEFAULT_ETA,
                  epochs=constants.DEFAULT_EPOCH,
@@ -186,23 +189,24 @@ class EmbeddingModel(abc.ABC):
 
         # Store for restoring later.
         self.all_params = \
-            {
-                'k': k,
-                'eta': eta,
-                'epochs': epochs,
-                'batches_count': batches_count,
-                'seed': seed,
-                'embedding_model_params': embedding_model_params,
-                'optimizer': optimizer,
-                'optimizer_params': optimizer_params,
-                'loss': loss,
-                'loss_params': loss_params,
-                'regularizer': regularizer,
-                'regularizer_params': regularizer_params,
-                'initializer': initializer,
-                'initializer_params': initializer_params,
-                'verbose': verbose
-            }
+            {'project_name': project_name,
+             'k': k,
+             'eta': eta,
+             'epochs': epochs,
+             'batches_count': batches_count,
+             'seed': seed,
+             'embedding_model_params': embedding_model_params,
+             'optimizer': optimizer,
+             'optimizer_params': optimizer_params,
+             'loss': loss,
+             'loss_params': loss_params,
+             'regularizer': regularizer,
+             'regularizer_params': regularizer_params,
+             'initializer': initializer,
+             'initializer_params': initializer_params,
+             'verbose': verbose,
+             'model_class': model_class
+             }
         tf.reset_default_graph()
         self.seed = seed
         self.rnd = check_random_state(self.seed)
@@ -296,7 +300,7 @@ class EmbeddingModel(abc.ABC):
 
         self.log_directory = self.base_directory + self.class_name + "/" + self.project_name + "/" + date_time + "/Log/"
         self.checkpoint_path = self.base_directory + self.class_name + "/" + \
-                              self.project_name + "/" + date_time + "/Checkpoint/"
+                               self.project_name + "/" + date_time + "/Checkpoint/"
 
         if not os.path.isdir(self.checkpoint_path):
             os.makedirs(self.checkpoint_path)
@@ -310,7 +314,8 @@ class EmbeddingModel(abc.ABC):
 
         # Variable
         self.epoch = 1
-        self.accuracy = 0
+        self.hits_10_subject = 0
+        self.hits_10_object = 0
         self.train_loss = 0
         self.valid_loss = 0
 
@@ -319,15 +324,17 @@ class EmbeddingModel(abc.ABC):
         self.tensorboard_session = tf.Session()
 
         # TensorBoard Variable
-        self.accuracy_var = tf.Variable(0, dtype=tf.float32)
-        self.accuracy_summ = tf.summary.scalar('Accuracy/Hits10', self.accuracy_var)
+        self.hits_10_subject_var = tf.Variable(0, dtype=tf.float32)
+        self.hits_10_subject_summ = tf.summary.scalar('Accuracy/Hits10/Subject', self.hits_10_subject_var)
+
+        self.hits_10_object_var = tf.Variable(0, dtype=tf.float32)
+        self.hits_10_object_summ = tf.summary.scalar('Accuracy/Hits10/Object', self.hits_10_object_var)
 
         self.train_loss_var = tf.Variable(0, dtype=tf.float32)
         self.train_loss_summ = tf.summary.scalar('Loss/Train', self.train_loss_var)
 
         self.valid_loss_var = tf.Variable(0, dtype=tf.float32)
         self.valid_loss_summ = tf.summary.scalar('Loss/Valid', self.valid_loss_var)
-
 
     @abc.abstractmethod
     def _fn(self, e_s, e_p, e_o):
@@ -413,6 +420,7 @@ class EmbeddingModel(abc.ABC):
         if not self.dealing_with_large_graphs:
             self.trained_model_params = self.sess_train.run([self.ent_emb, self.rel_emb])
         else:
+
             self.trained_model_params = [self.ent_emb_cpu, self.sess_train.run(self.rel_emb)]
 
     def _load_model_from_trained_params(self):
@@ -597,7 +605,7 @@ class EmbeddingModel(abc.ABC):
 
             insert_lookup_op = self.sparse_mappings.insert(self.unique_entities,
                                                            tf.reshape(tf.range(tf.shape(self.unique_entities)[0],
-                                                                      dtype=tf.int32), (-1, 1)))
+                                                                               dtype=tf.int32), (-1, 1)))
 
             dependencies.append(insert_lookup_op)
 
@@ -921,7 +929,6 @@ class EmbeddingModel(abc.ABC):
         # Handle Callbacks
         self.parse_callbacks(callbacks)
 
-
         self.train_dataset_handle = None
         # try-except block is mainly to handle clean up in case of exception or manual stop in jupyter notebook
         try:
@@ -942,12 +949,16 @@ class EmbeddingModel(abc.ABC):
             # create internal IDs mappings
             self.rel_to_idx, self.ent_to_idx = self.train_dataset_handle.generate_mappings()
 
+            if self.verbose:
+                print("Number of Triple Train:", len(X))
+                print("Number of entity:", len(self.ent_to_idx))
+                print("Number of relation:", len(self.rel_to_idx))
+
             self.entity_emb_var = tf.Variable(np.empty((len(self.ent_to_idx), self.internal_k), dtype=np.float32))
             self.entity_emb_summ = tf.summary.histogram('Weight/Entity', self.entity_emb_var)
 
             self.relation_emb_var = tf.Variable(np.empty((len(self.rel_to_idx), self.internal_k), dtype=np.float32))
             self.relation_emb_summ = tf.summary.histogram('Weight/Relation', self.relation_emb_var)
-
 
             prefetch_batches = 1
 
@@ -980,7 +991,11 @@ class EmbeddingModel(abc.ABC):
                 self.rnd = check_random_state(self.seed)
                 tf.random.set_random_seed(self.seed)
 
-            self.sess_train = tf.Session(config=self.tf_config)
+            config = self.tf_config
+
+            config.gpu_options.allow_growth = True
+
+            self.sess_train = tf.Session(config=config)
 
             batch_size = int(np.ceil(self.train_dataset_handle.get_size("train") / self.batches_count))
 
@@ -1011,8 +1026,9 @@ class EmbeddingModel(abc.ABC):
             # Validation Loss
             if X_valid is not None:
                 dataset_loss = tf.data.Dataset.from_generator(self._validation_loss,
-                                                         output_types=(tf.int32, tf.int32, tf.float32),
-                                                         output_shapes=((None, 3), (None, 1), (None, self.internal_k)))
+                                                              output_types=(tf.int32, tf.int32, tf.float32),
+                                                              output_shapes=(
+                                                              (None, 3), (None, 1), (None, self.internal_k)))
 
                 dataset_loss = dataset_loss.repeat().prefetch(prefetch_batches)
 
@@ -1116,7 +1132,10 @@ class EmbeddingModel(abc.ABC):
                     except AttributeError:
                         pass
 
-            self._save_trained_params()
+            try:
+                self._save_trained_params()
+            except ValueError:
+                self._load_model_from_trained_params()
             self._end_training()
         except BaseException as e:
             self._end_training()
@@ -1263,7 +1282,7 @@ class EmbeddingModel(abc.ABC):
 
             insert_lookup_op = self.sparse_mappings.insert(unique_ent,
                                                            tf.reshape(tf.range(tf.shape(unique_ent)[0],
-                                                                      dtype=tf.int32), (-1, 1)))
+                                                                               dtype=tf.int32), (-1, 1)))
             test_dependency.append(insert_lookup_op)
 
             # Execute the dependency
@@ -1366,6 +1385,7 @@ class EmbeddingModel(abc.ABC):
                                                           self.corruption_entities_tf,
                                                           corrupt_side)
 
+
             # Compute scores for negatives
             e_s, e_p, e_o = self._lookup_embeddings(self.out_corr)
             self.scores_predict = self._fn(e_s, e_p, e_o)
@@ -1440,13 +1460,14 @@ class EmbeddingModel(abc.ABC):
             self.rank = tf.stack([tf.reduce_sum(tf.cast(
                 subj_corruption_scores >= self.score_positive,
                 tf.int32)) + 1 - positives_among_sub_corruptions_ranked_higher,
-                tf.reduce_sum(tf.cast(obj_corruption_scores >= self.score_positive,
-                                      tf.int32)) + 1 - positives_among_obj_corruptions_ranked_higher], 0)
+                                  tf.reduce_sum(tf.cast(obj_corruption_scores >= self.score_positive,
+                                                        tf.int32)) + 1 - positives_among_obj_corruptions_ranked_higher],
+                                 0)
         else:
             self.rank = tf.reduce_sum(tf.cast(
                 self.scores_predict >= self.score_positive,
                 tf.int32)) + 1 - positives_among_sub_corruptions_ranked_higher - \
-                positives_among_obj_corruptions_ranked_higher
+                        positives_among_obj_corruptions_ranked_higher
 
     def end_evaluation(self):
         """End the evaluation and close the Tensorflow session.
@@ -1460,7 +1481,7 @@ class EmbeddingModel(abc.ABC):
 
         self.eval_config = {}
 
-    def get_ranks(self, dataset_handle):
+    def get_ranks(self, dataset_handle, verbose=True):
         """ Used by evaluate_predictions to get the ranks for evaluation.
 
         Parameters
@@ -1500,7 +1521,7 @@ class EmbeddingModel(abc.ABC):
 
             ranks = []
 
-            for _ in tqdm(range(self.eval_dataset_handle.get_size('test')), disable=(not self.verbose)):
+            for _ in tqdm(range(self.eval_dataset_handle.get_size('test')), disable=(not verbose)):
                 rank = sess.run(self.rank)
                 if self.eval_config.get('corrupt_side', constants.DEFAULT_CORRUPT_SIDE_EVAL) == 's,o':
                     ranks.append(list(rank))
@@ -1957,8 +1978,11 @@ class EmbeddingModel(abc.ABC):
 
     def tensorboard(self):
         # Accuracy
-        self.tensorboard_session.run(self.accuracy_var.assign(self.accuracy))
-        self.tensorboard_writer.add_summary(self.tensorboard_session.run(self.accuracy_summ), self.epoch)
+        self.tensorboard_session.run(self.hits_10_subject_var.assign(self.hits_10_subject))
+        self.tensorboard_writer.add_summary(self.tensorboard_session.run(self.hits_10_subject_summ), self.epoch)
+
+        self.tensorboard_session.run(self.hits_10_object_var.assign(self.hits_10_object))
+        self.tensorboard_writer.add_summary(self.tensorboard_session.run(self.hits_10_object_summ), self.epoch)
 
         # Train Loss
         self.tensorboard_session.run(self.train_loss_var.assign(self.train_loss))
@@ -1969,31 +1993,32 @@ class EmbeddingModel(abc.ABC):
         self.tensorboard_writer.add_summary(self.tensorboard_session.run(self.valid_loss_summ), self.epoch)
 
         # Entity and Relation Embeddings
-        try:
-            self.sess_train.run(self.set_training_false)
-        except AttributeError:
-            pass
+        if self.epoch % 20 == 0:
+            try:
+                self.sess_train.run(self.set_training_false)
+            except AttributeError:
+                pass
 
-        tmp = self.is_fitted
-        self.is_fitted = True
+            tmp = self.is_fitted
+            self.is_fitted = True
 
-        self._save_trained_params()
+            self._save_trained_params()
 
-        entity_embeddings = self.get_embeddings(list(self.ent_to_idx.keys()), "entity")
-        relation_embeddings = self.get_embeddings(list(self.rel_to_idx.keys()), "relation")
+            entity_embeddings = self.get_embeddings(list(self.ent_to_idx.keys()), "entity")
+            relation_embeddings = self.get_embeddings(list(self.rel_to_idx.keys()), "relation")
 
-        self.tensorboard_session.run(self.entity_emb_var.assign(entity_embeddings))
-        self.tensorboard_writer.add_summary(self.tensorboard_session.run(self.entity_emb_summ), self.epoch)
+            self.tensorboard_session.run(self.entity_emb_var.assign(entity_embeddings))
+            self.tensorboard_writer.add_summary(self.tensorboard_session.run(self.entity_emb_summ), self.epoch)
 
-        self.tensorboard_session.run(self.relation_emb_var.assign(relation_embeddings))
-        self.tensorboard_writer.add_summary(self.tensorboard_session.run(self.relation_emb_summ), self.epoch)
+            self.tensorboard_session.run(self.relation_emb_var.assign(relation_embeddings))
+            self.tensorboard_writer.add_summary(self.tensorboard_session.run(self.relation_emb_summ), self.epoch)
 
-        self.is_fitted = tmp
+            self.is_fitted = tmp
 
-        try:
-            self.sess_train.run(self.set_training_true)
-        except AttributeError:
-            pass
+            try:
+                self.sess_train.run(self.set_training_true)
+            except AttributeError:
+                pass
 
         self.tensorboard_writer.flush()
 
@@ -2035,38 +2060,89 @@ class EmbeddingModel(abc.ABC):
 
             yield out, unique_entities, entity_embeddings
 
-
-    def validation(self, dataset, positive_filter, corruption_entities):
+    def validation(self, dataset, positive_filter, corruption_entities_subject, corruption_entities_object, dim):
         try:
             self.sess_train.run(self.set_training_false)
         except AttributeError:
             pass
+        from ampligraph.evaluation import evaluate_performance
+        from ampligraph.latent_features import save_model, restore_model
+        from ampligraph.evaluation import  hits_at_n_score
 
-        self.early_stopping_params = {'x_valid': dataset,
-                                      'criteria': 'hits10',
-                                      'corruption_entities': corruption_entities,
-                                      'x_filter': positive_filter}
 
-        self._initialize_early_stopping()
+        tmp = self.is_fitted
 
-        ranks = []
+        self.is_fitted = True
 
-        # Get each triple and compute the rank for that triple
-        for x_test_triple in range(self.eval_dataset_handle.get_size("valid")):
-            rank_triple = self.sess_train.run(self.rank)
-            if self.eval_config.get('corrupt_side', constants.DEFAULT_CORRUPT_SIDE_EVAL) == 's,o':
-                ranks.append(list(rank_triple))
-            else:
-                ranks.append(rank_triple)
+        try:
+            self._save_trained_params()
+        except ValueError:
+            self._load_model_from_trained_params()
 
-        self.accuracy = hits_at_n_score(ranks, 10)
+        save_model(self, self.checkpoint_path + "model.pkl")
+
+        model = restore_model(self.checkpoint_path + "model.pkl")
+
+        print()
+        print("Validation...")
+
+        # Subject
+
+        rank_subject = []
+
+        for _ in range(10):
+            ranks = evaluate_performance(dataset,
+                                         model=model,
+                                         filter_triples=positive_filter,  # Corruption strategy filter defined above
+                                         corrupt_side='s',  # corrupt subj and obj separately while evaluating
+                                         entities_subset=random.sample(corruption_entities_subject, dim),
+                                         filter_unseen=True,
+                                         verbose=False)
+
+            current = hits_at_n_score(ranks, n=10)
+            rank_subject.append(current)
 
         if self.verbose:
-            print()
-            print("Validation - Epoch #", self.epoch, "Hits10 = ", self.accuracy)
+            self.hits_10_subject = statistics.mean(rank_subject)
+            print("Hits@10 Subject: %.5f" % self.hits_10_subject)
 
+        # Object
+        rank_objects = []
+
+        for _ in range(10):
+            ranks = evaluate_performance(dataset,
+                                         model=model,
+                                         filter_triples=positive_filter,  # Corruption strategy filter defined above
+                                         corrupt_side='o',  # corrupt subj and obj separately while evaluating
+                                         entities_subset=random.sample(corruption_entities_object, dim),
+                                         filter_unseen=True,
+                                         verbose=False)
+
+            current = hits_at_n_score(ranks, n=10)
+            rank_objects.append(current)
+
+        if self.verbose:
+            self.hits_10_object = statistics.mean(rank_objects)
+            print("Hits@10 Object: %.5f" % self.hits_10_object)
+
+        del model
+
+        self.is_fitted = tmp
         try:
             self.sess_train.run(self.set_training_true)
         except AttributeError:
             pass
         return
+
+    def print_hyperparams(self):
+        diz = self.get_hyperparameter_dict()
+        text = ""
+        diz["model_class"] = self.__class__.__name__
+        for key in diz:
+            line = str(key) + " : " + str(diz[key])
+            text += "\n" + line
+            summary = tf.summary.text('HyperParameters' + "/" + str(key), tf.convert_to_tensor(str(diz[key])))
+            tmp = self.tensorboard_session.run(summary)
+            self.tensorboard_writer.add_summary(tmp, self.epoch)
+        if self.verbose:
+            print(text)

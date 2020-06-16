@@ -59,6 +59,7 @@ class ConvKB(EmbeddingModel):
     """
 
     def __init__(self,
+                 project_name="",
                  k=constants.DEFAULT_EMBEDDING_SIZE,
                  eta=constants.DEFAULT_ETA,
                  epochs=constants.DEFAULT_EPOCH,
@@ -181,7 +182,7 @@ class ConvKB(EmbeddingModel):
                          loss=loss, loss_params=loss_params,
                          regularizer=regularizer, regularizer_params=regularizer_params,
                          initializer=initializer, initializer_params=initializer_params,
-                         large_graphs=large_graphs, verbose=verbose)
+                         large_graphs=large_graphs, verbose=verbose, project_name=project_name)
 
     def _initialize_parameters(self):
         """Initialize parameters of the model.
@@ -397,7 +398,7 @@ class ConvKB(EmbeddingModel):
 
         return tf.squeeze(self.scores)
 
-    def fit(self, X, early_stopping=False, early_stopping_params={}):
+    def fit(self, X, X_valid=None, early_stopping=False, early_stopping_params={}, callbacks={}, restore=False):
         """Train a ConvKB model (with optional early stopping).
 
         The model is trained on a training set X using the training protocol described in :cite:`trouillon2016complex`.
@@ -466,4 +467,4 @@ class ConvKB(EmbeddingModel):
                 Example: ``early_stopping_params={x_valid=X['valid'], 'criteria': 'mrr'}``
 
         """
-        super().fit(X, early_stopping, early_stopping_params)
+        super().fit(X, X_valid, early_stopping, early_stopping_params, callbacks, restore)
