@@ -89,7 +89,7 @@ def save_model(model, model_name_path=None):
         # dump model tf
 
 
-def restore_model(model_name_path=None):
+def restore_model(model_name_path=None, evaluation=False):
     """Restore a saved model from disk.
 
         See also :meth:`save_model`.
@@ -116,6 +116,8 @@ def restore_model(model_name_path=None):
             the neural knowledge graph embedding model restored from disk.
 
     """
+
+
     if model_name_path is None:
         logger.warning("There is no model name specified. \
                         We will try to lookup \
@@ -135,6 +137,9 @@ def restore_model(model_name_path=None):
     try:
         with open(model_name_path, 'rb') as fr:
             restored_obj = pickle.load(fr)
+
+        if not evaluation:
+            restored_obj['hyperparams']["create_dir"] = False
 
         logger.debug('Restoring model ...')
         module = importlib.import_module("ampligraph.latent_features")

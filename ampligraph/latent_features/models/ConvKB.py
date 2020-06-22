@@ -60,6 +60,7 @@ class ConvKB(EmbeddingModel):
 
     def __init__(self,
                  project_name="",
+                 model_class="",
                  k=constants.DEFAULT_EMBEDDING_SIZE,
                  eta=constants.DEFAULT_ETA,
                  epochs=constants.DEFAULT_EPOCH,

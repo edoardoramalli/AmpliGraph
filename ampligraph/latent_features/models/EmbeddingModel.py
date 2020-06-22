@@ -77,6 +77,7 @@ class EmbeddingModel(abc.ABC):
     def __init__(self,
                  project_name="",
                  model_class="",
+                 create_dir=True,
                  k=constants.DEFAULT_EMBEDDING_SIZE,
                  eta=constants.DEFAULT_ETA,
                  epochs=constants.DEFAULT_EPOCH,
@@ -254,6 +255,7 @@ class EmbeddingModel(abc.ABC):
             self.optimizer = OPTIMIZER_REGISTRY[optimizer](self.optimizer_params,
                                                            self.batches_count,
                                                            verbose)
+
         except KeyError:
             msg = 'Unsupported optimizer: {}'.format(optimizer)
             logger.error(msg)
@@ -301,12 +303,11 @@ class EmbeddingModel(abc.ABC):
         self.log_directory = self.base_directory + self.class_name + "/" + self.project_name + "/" + date_time + "/Log/"
         self.checkpoint_path = self.base_directory + self.class_name + "/" + \
                                self.project_name + "/" + date_time + "/Checkpoint/"
-
-        if not os.path.isdir(self.checkpoint_path):
-            os.makedirs(self.checkpoint_path)
-
-        if not os.path.isdir(self.log_directory):
-            os.makedirs(self.log_directory)
+        if create_dir:
+            if not os.path.isdir(self.checkpoint_path):
+                os.makedirs(self.checkpoint_path)
+            if not os.path.isdir(self.log_directory):
+                os.makedirs(self.log_directory)
 
         # CallBacks
         self.callbacks_start = {}
@@ -335,6 +336,9 @@ class EmbeddingModel(abc.ABC):
 
         self.valid_loss_var = tf.Variable(0, dtype=tf.float32)
         self.valid_loss_summ = tf.summary.scalar('Loss/Valid', self.valid_loss_var)
+
+        self.lr_var = tf.Variable(0, dtype=tf.float32)
+        self.lr_summ = tf.summary.scalar('Hyperparameters/Learning Rate', self.lr_var)
 
     @abc.abstractmethod
     def _fn(self, e_s, e_p, e_o):
@@ -1553,6 +1557,9 @@ class EmbeddingModel(abc.ABC):
             The predicted scores for input triples X.
 
         """
+
+        print("qUA")
+
         if not self.is_fitted:
             msg = 'Model has not been fitted.'
             logger.error(msg)
@@ -1992,6 +1999,10 @@ class EmbeddingModel(abc.ABC):
         self.tensorboard_session.run(self.valid_loss_var.assign(self.valid_loss))
         self.tensorboard_writer.add_summary(self.tensorboard_session.run(self.valid_loss_summ), self.epoch)
 
+        # Learning Rate
+        self.tensorboard_session.run(self.lr_var.assign(self.optimizer._optimizer_params['lr']))
+        self.tensorboard_writer.add_summary(self.tensorboard_session.run(self.lr_summ), self.epoch)
+
         # Entity and Relation Embeddings
         if self.epoch % 20 == 0:
             try:
@@ -2081,7 +2092,7 @@ class EmbeddingModel(abc.ABC):
 
         save_model(self, self.checkpoint_path + "model.pkl")
 
-        model = restore_model(self.checkpoint_path + "model.pkl")
+        model = restore_model(self.checkpoint_path + "model.pkl", False)
 
         print()
         print("Validation...")
@@ -2090,7 +2101,9 @@ class EmbeddingModel(abc.ABC):
 
         rank_subject = []
 
-        for _ in range(10):
+        number_of_trials = 10
+
+        for _ in range(number_of_trials):
             ranks = evaluate_performance(dataset,
                                          model=model,
                                          filter_triples=positive_filter,  # Corruption strategy filter defined above
@@ -2101,6 +2114,7 @@ class EmbeddingModel(abc.ABC):
 
             current = hits_at_n_score(ranks, n=10)
             rank_subject.append(current)
+            del ranks
 
         if self.verbose:
             self.hits_10_subject = statistics.mean(rank_subject)
@@ -2109,7 +2123,7 @@ class EmbeddingModel(abc.ABC):
         # Object
         rank_objects = []
 
-        for _ in range(10):
+        for _ in range(number_of_trials):
             ranks = evaluate_performance(dataset,
                                          model=model,
                                          filter_triples=positive_filter,  # Corruption strategy filter defined above
@@ -2120,6 +2134,7 @@ class EmbeddingModel(abc.ABC):
 
             current = hits_at_n_score(ranks, n=10)
             rank_objects.append(current)
+            del ranks
 
         if self.verbose:
             self.hits_10_object = statistics.mean(rank_objects)

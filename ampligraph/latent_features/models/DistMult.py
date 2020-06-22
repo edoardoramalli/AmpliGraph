@@ -46,6 +46,9 @@ class DistMult(EmbeddingModel):
     """
 
     def __init__(self,
+                 project_name="",
+                 model_class="",
+                 create_dir=True,
                  k=constants.DEFAULT_EMBEDDING_SIZE,
                  eta=constants.DEFAULT_ETA,
                  epochs=constants.DEFAULT_EPOCH,
@@ -164,7 +167,7 @@ class DistMult(EmbeddingModel):
                          loss=loss, loss_params=loss_params,
                          regularizer=regularizer, regularizer_params=regularizer_params,
                          initializer=initializer, initializer_params=initializer_params,
-                         verbose=verbose)
+                         verbose=verbose, project_name=project_name, create_dir=create_dir)
 
     def _fn(self, e_s, e_p, e_o):
         r"""DistMult
@@ -192,7 +195,7 @@ class DistMult(EmbeddingModel):
 
         return tf.reduce_sum(e_s * e_p * e_o, axis=1)
 
-    def fit(self, X, early_stopping=False, early_stopping_params={}):
+    def fit(self, X, X_valid=None,early_stopping=False, early_stopping_params={}, callbacks={}, restore=False):
         """Train an DistMult.
 
         The model is trained on a training set X using the training protocol
@@ -252,7 +255,7 @@ class DistMult(EmbeddingModel):
                 Example: ``early_stopping_params={x_valid=X['valid'], 'criteria': 'mrr'}``
 
         """
-        super().fit(X, early_stopping, early_stopping_params)
+        super().fit(X, X_valid, early_stopping, early_stopping_params, callbacks, restore)
 
     def predict(self, X, from_idx=False):
         __doc__ = super().predict.__doc__  # NOQA
