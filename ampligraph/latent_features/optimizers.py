@@ -67,6 +67,7 @@ class Optimizer(abc.ABC):
     def _display_params(self):
         """Display the parameter values
         """
+
         logger.info('\n------ Optimizer -----')
         logger.info('Name : {}'.format(self.name))
         for key, value in self._optimizer_params.items():
@@ -192,7 +193,6 @@ class AdamOptimizer(Optimizer):
         verbose : bool
             Enable/disable verbose mode
         """
-
         super(AdamOptimizer, self).__init__(optimizer_params, batches_count, verbose)
 
     def minimize(self, loss):

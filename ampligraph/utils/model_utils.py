@@ -73,7 +73,8 @@ def save_model(model, model_name_path=None):
         'ent_to_idx': model.ent_to_idx,
         'rel_to_idx': model.rel_to_idx,
         'is_calibrated': model.is_calibrated,
-        'project_name': model.project_name
+        'project_name': model.project_name,
+        'create_dir': model.create_dir
     }
 
     model.get_embedding_model_params(obj)
@@ -137,9 +138,6 @@ def restore_model(model_name_path=None, evaluation=False):
     try:
         with open(model_name_path, 'rb') as fr:
             restored_obj = pickle.load(fr)
-
-        if not evaluation:
-            restored_obj['hyperparams']["create_dir"] = False
 
         logger.debug('Restoring model ...')
         module = importlib.import_module("ampligraph.latent_features")

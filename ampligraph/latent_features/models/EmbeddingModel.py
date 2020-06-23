@@ -227,6 +227,8 @@ class EmbeddingModel(abc.ABC):
 
         self.dealing_with_large_graphs = large_graphs
 
+        self.create_dir = create_dir
+
         if batches_count == 1:
             logger.warning(
                 'All triples will be processed in the same batch (batches_count=1). '
@@ -255,6 +257,9 @@ class EmbeddingModel(abc.ABC):
             self.optimizer = OPTIMIZER_REGISTRY[optimizer](self.optimizer_params,
                                                            self.batches_count,
                                                            verbose)
+
+
+
 
         except KeyError:
             msg = 'Unsupported optimizer: {}'.format(optimizer)
@@ -290,7 +295,7 @@ class EmbeddingModel(abc.ABC):
 
         # Time Project
         now = datetime.now()
-        date_time = now.strftime("%Y.%m.%d_%H:%M:%S")
+        self.date_time = now.strftime("%Y.%m.%d_%H:%M:%S")
 
         # Directory
 
@@ -300,14 +305,6 @@ class EmbeddingModel(abc.ABC):
         if self.project_name == "":
             self.project_name = "default"
 
-        self.log_directory = self.base_directory + self.class_name + "/" + self.project_name + "/" + date_time + "/Log/"
-        self.checkpoint_path = self.base_directory + self.class_name + "/" + \
-                               self.project_name + "/" + date_time + "/Checkpoint/"
-        if create_dir:
-            if not os.path.isdir(self.checkpoint_path):
-                os.makedirs(self.checkpoint_path)
-            if not os.path.isdir(self.log_directory):
-                os.makedirs(self.log_directory)
 
         # CallBacks
         self.callbacks_start = {}
@@ -319,10 +316,9 @@ class EmbeddingModel(abc.ABC):
         self.hits_10_object = 0
         self.train_loss = 0
         self.valid_loss = 0
+        self.lr = 0
 
-        # TensorBoard
-        self.tensorboard_writer = tf.summary.FileWriter(self.log_directory)
-        self.tensorboard_session = tf.Session()
+
 
         # TensorBoard Variable
         self.hits_10_subject_var = tf.Variable(0, dtype=tf.float32)
@@ -1999,9 +1995,9 @@ class EmbeddingModel(abc.ABC):
         self.tensorboard_session.run(self.valid_loss_var.assign(self.valid_loss))
         self.tensorboard_writer.add_summary(self.tensorboard_session.run(self.valid_loss_summ), self.epoch)
 
-        # Learning Rate
-        self.tensorboard_session.run(self.lr_var.assign(self.optimizer._optimizer_params['lr']))
-        self.tensorboard_writer.add_summary(self.tensorboard_session.run(self.lr_summ), self.epoch)
+        # # Learning Rate
+        # self.tensorboard_session.run(self.lr_var.assign(self.optimizer.optimizer._lr))
+        # self.tensorboard_writer.add_summary(self.tensorboard_session.run(self.lr_summ), self.epoch)
 
         # Entity and Relation Embeddings
         if self.epoch % 20 == 0:
@@ -2071,6 +2067,24 @@ class EmbeddingModel(abc.ABC):
 
             yield out, unique_entities, entity_embeddings
 
+    def create_directory(self):
+        base = self.base_directory + self.class_name + "/" + self.project_name + "/" + self.date_time
+
+        self.log_directory = base + "/Log/"
+        self.checkpoint_path = base + "/Checkpoint/"
+
+        if not os.path.isdir(self.checkpoint_path):
+            print("A")
+            os.makedirs(self.checkpoint_path)
+        if not os.path.isdir(self.log_directory):
+            print("B")
+            os.makedirs(self.log_directory)
+
+        # TensorBoard
+        self.tensorboard_writer = tf.summary.FileWriter(self.log_directory)
+        self.tensorboard_session = tf.Session()
+
+
     def validation(self, dataset, positive_filter, corruption_entities_subject, corruption_entities_object, dim):
         try:
             self.sess_train.run(self.set_training_false)
@@ -2078,7 +2092,7 @@ class EmbeddingModel(abc.ABC):
             pass
         from ampligraph.evaluation import evaluate_performance
         from ampligraph.latent_features import save_model, restore_model
-        from ampligraph.evaluation import  hits_at_n_score
+        from ampligraph.evaluation import hits_at_n_score
 
 
         tmp = self.is_fitted
