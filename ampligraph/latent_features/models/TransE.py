@@ -203,7 +203,11 @@ class TransE(EmbeddingModel):
             tf.norm(e_s + e_p - e_o, ord=self.embedding_model_params.get('norm', constants.DEFAULT_NORM_TRANSE),
                     axis=1))
 
-    def fit(self, X, X_valid=None, early_stopping=False, early_stopping_params={}, callbacks={}, restore=False):
+    def fit(self, X, X_valid=None,
+            early_stopping=False, early_stopping_params={},
+            callbacks={},
+            restore=False, restore_epoch=0,
+            X_train_restore =None, X_valid_restore=None):
         """Train an Translating Embeddings model.
 
         The model is trained on a training set X using the training protocol
@@ -264,7 +268,8 @@ class TransE(EmbeddingModel):
 
 
         """
-        super().fit(X, X_valid, early_stopping, early_stopping_params, callbacks, restore)
+        super().fit(X, X_valid, early_stopping, early_stopping_params, callbacks, restore, restore_epoch,
+                    X_train_restore, X_valid_restore)
 
     def predict(self, X, from_idx=False):
         __doc__ = super().predict.__doc__  # NOQA

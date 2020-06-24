@@ -279,8 +279,9 @@ class EmbeddingModel(abc.ABC):
             logger.error(msg)
             raise ValueError(msg)
 
-        self.tf_config = tf.ConfigProto(allow_soft_placement=True)
-        self.tf_config.gpu_options.allow_growth = True
+        gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction=0.85)
+
+        self.tf_config = tf.ConfigProto(allow_soft_placement=True, gpu_options=gpu_options)
         self.sess_train = None
         self.trained_model_params = []
         self.is_fitted = False
@@ -891,7 +892,11 @@ class EmbeddingModel(abc.ABC):
 
             yield out, unique_entities, entity_embeddings
 
-    def fit(self, X, X_valid=None, early_stopping=False, early_stopping_params={}, callbacks={}, restore=False):
+    def fit(self, X, X_valid=None,
+            early_stopping=False, early_stopping_params={},
+            callbacks={},
+            restore=False, restore_epoch=0,
+            X_train_restore =None, X_valid_restore=None):
         """Train an EmbeddingModel (with optional early stopping).
 
         The model is trained on a training set X using the training protocol
@@ -949,11 +954,6 @@ class EmbeddingModel(abc.ABC):
             # create internal IDs mappings
             self.rel_to_idx, self.ent_to_idx = self.train_dataset_handle.generate_mappings()
 
-            if self.verbose:
-                print("Number of Triple Train:", len(X))
-                print("Number of entity:", len(self.ent_to_idx))
-                print("Number of relation:", len(self.rel_to_idx))
-
             self.entity_emb_var = tf.Variable(np.empty((len(self.ent_to_idx), self.internal_k), dtype=np.float32))
             self.entity_emb_summ = tf.summary.histogram('Weight/Entity', self.entity_emb_var)
 
@@ -985,6 +985,18 @@ class EmbeddingModel(abc.ABC):
 
             self.train_dataset_handle.map_data()
 
+            if X_train_restore is not None:
+                self.train_dataset_handle.set_data(X_train_restore, "train")
+            if X_valid_restore is not None:
+                self.train_dataset_handle.set_data(X_valid_restore, "validation")
+
+            if self.verbose:
+                print("Number of Triple Train:", self.train_dataset_handle.get_size("train"))
+                if X_valid_restore is not None or X_valid is not None:
+                    print("Number of Triple Validation:", self.train_dataset_handle.get_size("validation"))
+                print("Number of entity:", len(self.ent_to_idx))
+                print("Number of relation:", len(self.rel_to_idx))
+
             # This is useful when we re-fit the same model (e.g. retraining in model selection)
             if self.is_fitted:
                 tf.reset_default_graph()
@@ -993,7 +1005,6 @@ class EmbeddingModel(abc.ABC):
 
             config = self.tf_config
 
-            config.gpu_options.allow_growth = True
 
             self.sess_train = tf.Session(config=config)
 
@@ -1072,7 +1083,7 @@ class EmbeddingModel(abc.ABC):
             epoch_iterator_with_progress = tqdm(range(1, self.epochs + 1), disable=(not self.verbose), unit='epoch')
 
             for epoch in epoch_iterator_with_progress:
-                self.epoch = epoch
+                self.epoch = epoch + restore_epoch
                 self.apply_callbacks(self.callbacks_start)
                 losses = []
                 valid_loss = []
@@ -1132,11 +1143,14 @@ class EmbeddingModel(abc.ABC):
                     except AttributeError:
                         pass
 
+
             try:
                 self._save_trained_params()
+
             except ValueError:
                 self._load_model_from_trained_params()
             self._end_training()
+
         except BaseException as e:
             self._end_training()
             raise e
@@ -2074,10 +2088,8 @@ class EmbeddingModel(abc.ABC):
         self.checkpoint_path = base + "/Checkpoint/"
 
         if not os.path.isdir(self.checkpoint_path):
-            print("A")
             os.makedirs(self.checkpoint_path)
         if not os.path.isdir(self.log_directory):
-            print("B")
             os.makedirs(self.log_directory)
 
         # TensorBoard
