@@ -90,7 +90,7 @@ def save_model(model, model_name_path=None):
         # dump model tf
 
 
-def restore_model(model_name_path=None, evaluation=False):
+def restore_model(model_name_path=None):
     """Restore a saved model from disk.
 
         See also :meth:`save_model`.
