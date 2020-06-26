@@ -28,6 +28,9 @@ import warnings
 import statistics
 import random
 
+import time
+import gc
+
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
 
@@ -209,7 +212,7 @@ class EmbeddingModel(abc.ABC):
              'model_class': model_class
              }
         tf.reset_default_graph()
-        self.seed = seed
+        self.seed = int(time.time())
         self.rnd = check_random_state(self.seed)
         tf.random.set_random_seed(seed)
 
@@ -279,9 +282,7 @@ class EmbeddingModel(abc.ABC):
             logger.error(msg)
             raise ValueError(msg)
 
-        gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction=0.85)
-
-        self.tf_config = tf.ConfigProto(allow_soft_placement=True, gpu_options=gpu_options)
+        self.tf_config = tf.ConfigProto(allow_soft_placement=True)
         self.sess_train = None
         self.trained_model_params = []
         self.is_fitted = False
@@ -318,6 +319,7 @@ class EmbeddingModel(abc.ABC):
         self.train_loss = 0
         self.valid_loss = 0
         self.lr = 0
+        self.last_tensorboard = 0
 
 
 
@@ -1005,7 +1007,6 @@ class EmbeddingModel(abc.ABC):
 
             config = self.tf_config
 
-
             self.sess_train = tf.Session(config=config)
 
             batch_size = int(np.ceil(self.train_dataset_handle.get_size("train") / self.batches_count))
@@ -1083,13 +1084,14 @@ class EmbeddingModel(abc.ABC):
             epoch_iterator_with_progress = tqdm(range(1, self.epochs + 1), disable=(not self.verbose), unit='epoch')
 
             for epoch in epoch_iterator_with_progress:
+                print(self.optimizer.current_lr)
                 self.epoch = epoch + restore_epoch
                 self.apply_callbacks(self.callbacks_start)
                 losses = []
                 valid_loss = []
                 for batch in range(1, self.batches_count + 1):
                     feed_dict = {}
-                    self.optimizer.update_feed_dict(feed_dict, batch, epoch)
+                    self.optimizer.update_feed_dict(feed_dict, batch, self.epoch)
                     if self.dealing_with_large_graphs:
                         loss_batch, unique_entities, _ = self.sess_train.run([loss, self.unique_entities, train],
                                                                              feed_dict=feed_dict)
@@ -1568,7 +1570,6 @@ class EmbeddingModel(abc.ABC):
 
         """
 
-        print("qUA")
 
         if not self.is_fitted:
             msg = 'Model has not been fitted.'
@@ -1994,6 +1995,10 @@ class EmbeddingModel(abc.ABC):
                 fun_name(**parameters)
 
     def tensorboard(self):
+        if self.last_tensorboard == self.epoch:
+            return
+
+        self.last_tensorboard = self.epoch
         # Accuracy
         self.tensorboard_session.run(self.hits_10_subject_var.assign(self.hits_10_subject))
         self.tensorboard_writer.add_summary(self.tensorboard_session.run(self.hits_10_subject_summ), self.epoch)
@@ -2081,6 +2086,13 @@ class EmbeddingModel(abc.ABC):
 
             yield out, unique_entities, entity_embeddings
 
+
+    def create_tensorboard(self):
+        # TensorBoard
+        self.tensorboard_writer = tf.summary.FileWriter(self.log_directory)
+        self.tensorboard_session = tf.Session()
+
+
     def create_directory(self):
         base = self.base_directory + self.class_name + "/" + self.project_name + "/" + self.date_time
 
@@ -2091,10 +2103,6 @@ class EmbeddingModel(abc.ABC):
             os.makedirs(self.checkpoint_path)
         if not os.path.isdir(self.log_directory):
             os.makedirs(self.log_directory)
-
-        # TensorBoard
-        self.tensorboard_writer = tf.summary.FileWriter(self.log_directory)
-        self.tensorboard_session = tf.Session()
 
 
     def validation(self, dataset, positive_filter, corruption_entities_subject, corruption_entities_object, dim):
@@ -2123,6 +2131,8 @@ class EmbeddingModel(abc.ABC):
         print()
         print("Validation...")
 
+        random.seed(int(time.time()))
+
         # Subject
 
         rank_subject = []
@@ -2141,6 +2151,7 @@ class EmbeddingModel(abc.ABC):
             current = hits_at_n_score(ranks, n=10)
             rank_subject.append(current)
             del ranks
+            gc.collect()
 
         if self.verbose:
             self.hits_10_subject = statistics.mean(rank_subject)
@@ -2161,6 +2172,7 @@ class EmbeddingModel(abc.ABC):
             current = hits_at_n_score(ranks, n=10)
             rank_objects.append(current)
             del ranks
+            gc.collect()
 
         if self.verbose:
             self.hits_10_object = statistics.mean(rank_objects)
@@ -2169,6 +2181,9 @@ class EmbeddingModel(abc.ABC):
         del model
 
         self.is_fitted = tmp
+
+        self.tensorboard()
+
         try:
             self.sess_train.run(self.set_training_true)
         except AttributeError:
