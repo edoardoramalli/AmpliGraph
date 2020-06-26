@@ -1084,7 +1084,6 @@ class EmbeddingModel(abc.ABC):
             epoch_iterator_with_progress = tqdm(range(1, self.epochs + 1), disable=(not self.verbose), unit='epoch')
 
             for epoch in epoch_iterator_with_progress:
-                print(self.optimizer.current_lr)
                 self.epoch = epoch + restore_epoch
                 self.apply_callbacks(self.callbacks_start)
                 losses = []
@@ -2015,8 +2014,12 @@ class EmbeddingModel(abc.ABC):
         self.tensorboard_writer.add_summary(self.tensorboard_session.run(self.valid_loss_summ), self.epoch)
 
         # # Learning Rate
-        # self.tensorboard_session.run(self.lr_var.assign(self.optimizer.optimizer._lr))
-        # self.tensorboard_writer.add_summary(self.tensorboard_session.run(self.lr_summ), self.epoch)
+        if self.optimizer.name == "sgd":
+            self.tensorboard_session.run(self.lr_var.assign(self.optimizer.current_lr))
+            self.tensorboard_writer.add_summary(self.tensorboard_session.run(self.lr_summ), self.epoch)
+        else:
+            self.tensorboard_session.run(self.lr_var.assign(self.optimizer._optimizer_params["lr"]))
+            self.tensorboard_writer.add_summary(self.tensorboard_session.run(self.lr_summ), self.epoch)
 
         # Entity and Relation Embeddings
         if self.epoch % 20 == 0:
