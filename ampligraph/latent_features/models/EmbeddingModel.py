@@ -80,7 +80,6 @@ class EmbeddingModel(abc.ABC):
     def __init__(self,
                  project_name="",
                  model_class="",
-                 create_dir=True,
                  k=constants.DEFAULT_EMBEDDING_SIZE,
                  eta=constants.DEFAULT_ETA,
                  epochs=constants.DEFAULT_EPOCH,
@@ -229,8 +228,6 @@ class EmbeddingModel(abc.ABC):
         self.batches_count = batches_count
 
         self.dealing_with_large_graphs = large_graphs
-
-        self.create_dir = create_dir
 
         if batches_count == 1:
             logger.warning(
@@ -2022,7 +2019,7 @@ class EmbeddingModel(abc.ABC):
             self.tensorboard_writer.add_summary(self.tensorboard_session.run(self.lr_summ), self.epoch)
 
         # Entity and Relation Embeddings
-        if self.epoch % 20 == 0:
+        if self.epoch % 50 == 0:
             try:
                 self.sess_train.run(self.set_training_false)
             except AttributeError:
@@ -2089,12 +2086,10 @@ class EmbeddingModel(abc.ABC):
 
             yield out, unique_entities, entity_embeddings
 
-
     def create_tensorboard(self):
         # TensorBoard
         self.tensorboard_writer = tf.summary.FileWriter(self.log_directory)
         self.tensorboard_session = tf.Session()
-
 
     def create_directory(self):
         base = self.base_directory + self.class_name + "/" + self.project_name + "/" + self.date_time
@@ -2106,7 +2101,6 @@ class EmbeddingModel(abc.ABC):
             os.makedirs(self.checkpoint_path)
         if not os.path.isdir(self.log_directory):
             os.makedirs(self.log_directory)
-
 
     def validation(self, dataset, positive_filter, corruption_entities_subject, corruption_entities_object, dim):
         try:
@@ -2129,7 +2123,7 @@ class EmbeddingModel(abc.ABC):
 
         save_model(self, self.checkpoint_path + "model.pkl")
 
-        model = restore_model(self.checkpoint_path + "model.pkl", False)
+        model = restore_model(self.checkpoint_path + "model.pkl")
 
         print()
         print("Validation...")

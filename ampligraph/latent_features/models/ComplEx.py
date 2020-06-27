@@ -69,7 +69,6 @@ class ComplEx(EmbeddingModel):
     def __init__(self,
                  project_name="",
                  model_class="",
-                 create_dir=True,
                  k=constants.DEFAULT_EMBEDDING_SIZE,
                  eta=constants.DEFAULT_ETA,
                  epochs=constants.DEFAULT_EPOCH,
@@ -181,7 +180,7 @@ class ComplEx(EmbeddingModel):
                          loss=loss, loss_params=loss_params,
                          regularizer=regularizer, regularizer_params=regularizer_params,
                          initializer=initializer, initializer_params=initializer_params,
-                         verbose=verbose, project_name=project_name, create_dir=create_dir)
+                         verbose=verbose, project_name=project_name)
 
         self.internal_k = self.k * 2
 

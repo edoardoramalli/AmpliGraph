@@ -74,7 +74,6 @@ def save_model(model, model_name_path=None):
         'rel_to_idx': model.rel_to_idx,
         'is_calibrated': model.is_calibrated,
         'project_name': model.project_name,
-        'create_dir': model.create_dir
     }
 
     model.get_embedding_model_params(obj)
