@@ -16,7 +16,7 @@ from ampligraph.latent_features.regularizers import REGULARIZER_REGISTRY
 from ampligraph.latent_features.optimizers import OPTIMIZER_REGISTRY, SGDOptimizer
 from ampligraph.latent_features.initializers import INITIALIZER_REGISTRY, DEFAULT_XAVIER_IS_UNIFORM
 from ampligraph.evaluation import generate_corruptions_for_fit, to_idx, generate_corruptions_for_eval, \
-    hits_at_n_score, mrr_score
+    hits_at_n_score, mrr_score, mr_score
 from ampligraph.datasets import AmpligraphDatasetAdapter, NumpyDatasetAdapter
 from functools import partial
 from ampligraph.latent_features import constants as constants
@@ -311,8 +311,12 @@ class EmbeddingModel(abc.ABC):
 
         # Variable
         self.epoch = 1
-        self.hits_10_subject = 0
-        self.hits_10_object = 0
+        self.hits_50 = 0
+        self.hits_10 = 0
+        self.hits_3 = 0
+        self.hits_1 = 0
+        self.mrr = 0
+        self.mr = 0
         self.train_loss = 0
         self.valid_loss = 0
         self.lr = 0
@@ -321,11 +325,23 @@ class EmbeddingModel(abc.ABC):
 
 
         # TensorBoard Variable
-        self.hits_10_subject_var = tf.Variable(0, dtype=tf.float32)
-        self.hits_10_subject_summ = tf.summary.scalar('Accuracy/Hits10/Subject', self.hits_10_subject_var)
+        self.hits_50_var = tf.Variable(0, dtype=tf.float32)
+        self.hits_50_summ = tf.summary.scalar('Accuracy/Hits50', self.hits_50_var)
 
-        self.hits_10_object_var = tf.Variable(0, dtype=tf.float32)
-        self.hits_10_object_summ = tf.summary.scalar('Accuracy/Hits10/Object', self.hits_10_object_var)
+        self.hits_10_var = tf.Variable(0, dtype=tf.float32)
+        self.hits_10_summ = tf.summary.scalar('Accuracy/Hits10', self.hits_10_var)
+
+        self.hits_3_var = tf.Variable(0, dtype=tf.float32)
+        self.hits_3_summ = tf.summary.scalar('Accuracy/Hits3', self.hits_3_var)
+
+        self.hits_1_var = tf.Variable(0, dtype=tf.float32)
+        self.hits_1_summ = tf.summary.scalar('Accuracy/Hits1', self.hits_1_var)
+
+        self.mrr_var = tf.Variable(0, dtype=tf.float32)
+        self.mrr_summ = tf.summary.scalar('Accuracy/MRR', self.mrr_var)
+
+        self.mr_var = tf.Variable(0, dtype=tf.float32)
+        self.mr_summ = tf.summary.scalar('Accuracy/MR', self.mr_var)
 
         self.train_loss_var = tf.Variable(0, dtype=tf.float32)
         self.train_loss_summ = tf.summary.scalar('Loss/Train', self.train_loss_var)
@@ -1996,11 +2012,23 @@ class EmbeddingModel(abc.ABC):
 
         self.last_tensorboard = self.epoch
         # Accuracy
-        self.tensorboard_session.run(self.hits_10_subject_var.assign(self.hits_10_subject))
-        self.tensorboard_writer.add_summary(self.tensorboard_session.run(self.hits_10_subject_summ), self.epoch)
+        self.tensorboard_session.run(self.hits_50_var.assign(self.hits_50))
+        self.tensorboard_writer.add_summary(self.tensorboard_session.run(self.hits_50_summ), self.epoch)
 
-        self.tensorboard_session.run(self.hits_10_object_var.assign(self.hits_10_object))
-        self.tensorboard_writer.add_summary(self.tensorboard_session.run(self.hits_10_object_summ), self.epoch)
+        self.tensorboard_session.run(self.hits_10_var.assign(self.hits_10))
+        self.tensorboard_writer.add_summary(self.tensorboard_session.run(self.hits_10_summ), self.epoch)
+
+        self.tensorboard_session.run(self.hits_3_var.assign(self.hits_3))
+        self.tensorboard_writer.add_summary(self.tensorboard_session.run(self.hits_3_summ), self.epoch)
+
+        self.tensorboard_session.run(self.hits_1_var.assign(self.hits_1))
+        self.tensorboard_writer.add_summary(self.tensorboard_session.run(self.hits_1_summ), self.epoch)
+
+        self.tensorboard_session.run(self.mrr_var.assign(self.mrr))
+        self.tensorboard_writer.add_summary(self.tensorboard_session.run(self.mrr_summ), self.epoch)
+
+        self.tensorboard_session.run(self.mr_var.assign(self.mr))
+        self.tensorboard_writer.add_summary(self.tensorboard_session.run(self.mr_summ), self.epoch)
 
         # Train Loss
         self.tensorboard_session.run(self.train_loss_var.assign(self.train_loss))
@@ -2019,7 +2047,7 @@ class EmbeddingModel(abc.ABC):
             self.tensorboard_writer.add_summary(self.tensorboard_session.run(self.lr_summ), self.epoch)
 
         # Entity and Relation Embeddings
-        if self.epoch % 50 == 0:
+        if self.epoch % 75 == 0:
             try:
                 self.sess_train.run(self.set_training_false)
             except AttributeError:
@@ -2132,11 +2160,20 @@ class EmbeddingModel(abc.ABC):
 
         # Subject
 
-        rank_subject = []
+        rank_50 = []
+        rank_10 = []
+        rank_3 = []
+        rank_1 = []
+        mrr = []
+        mr = []
 
-        number_of_trials = 10
+        number_of_trials = 5
 
         for _ in range(number_of_trials):
+            if len(corruption_entities_subject) < dim:
+                dim = len(corruption_entities_subject)
+                print("Corruption entities Overcome:", dim)
+
             ranks = evaluate_performance(dataset,
                                          model=model,
                                          filter_triples=positive_filter,  # Corruption strategy filter defined above
@@ -2145,19 +2182,30 @@ class EmbeddingModel(abc.ABC):
                                          filter_unseen=True,
                                          verbose=False)
 
-            current = hits_at_n_score(ranks, n=10)
-            rank_subject.append(current)
+            current_50 = hits_at_n_score(ranks, n=50)
+            current_10 = hits_at_n_score(ranks, n=10)
+            current_3 = hits_at_n_score(ranks, n=3)
+            current_1 = hits_at_n_score(ranks, n=1)
+            current_mrr = mrr_score(ranks)
+            current_mr = mr_score(ranks)
+
+            rank_50.append(current_50)
+            rank_10.append(current_10)
+            rank_3.append(current_3)
+            rank_1.append(current_1)
+            mrr.append(current_mrr)
+            mr.append(current_mr)
+
             del ranks
             gc.collect()
 
-        if self.verbose:
-            self.hits_10_subject = statistics.mean(rank_subject)
-            print("Hits@10 Subject: %.5f" % self.hits_10_subject)
 
         # Object
-        rank_objects = []
 
         for _ in range(number_of_trials):
+            if len(corruption_entities_object) < dim:
+                dim = len(corruption_entities_object)
+                print("Corruption entities Overcome:", dim)
             ranks = evaluate_performance(dataset,
                                          model=model,
                                          filter_triples=positive_filter,  # Corruption strategy filter defined above
@@ -2166,14 +2214,37 @@ class EmbeddingModel(abc.ABC):
                                          filter_unseen=True,
                                          verbose=False)
 
-            current = hits_at_n_score(ranks, n=10)
-            rank_objects.append(current)
+            current_50 = hits_at_n_score(ranks, n=50)
+            current_10 = hits_at_n_score(ranks, n=10)
+            current_3 = hits_at_n_score(ranks, n=3)
+            current_1 = hits_at_n_score(ranks, n=1)
+            current_mrr = mrr_score(ranks)
+            current_mr = mr_score(ranks)
+
+            rank_50.append(current_50)
+            rank_10.append(current_10)
+            rank_3.append(current_3)
+            rank_1.append(current_1)
+            mrr.append(current_mrr)
+            mr.append(current_mr)
+
             del ranks
             gc.collect()
 
+        self.hits_50 = statistics.mean(rank_50)
+        self.hits_10 = statistics.mean(rank_10)
+        self.hits_3 = statistics.mean(rank_3)
+        self.hits_1 = statistics.mean(rank_1)
+        self.mrr = statistics.mean(mrr)
+        self.mr = statistics.mean(mr)
+
         if self.verbose:
-            self.hits_10_object = statistics.mean(rank_objects)
-            print("Hits@10 Object: %.5f" % self.hits_10_object)
+            print("Hits@10: %.5f" % self.hits_10)
+            print("Hits@3: %.5f" % self.hits_3)
+            print("Hits@1: %.5f" % self.hits_1)
+            print("MRR: %.5f" % self.mrr)
+            print("MR: %.5f" % self.mr)
+
 
         del model
 
